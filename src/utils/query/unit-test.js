@@ -7,8 +7,8 @@ import {
   startAfter,
   startAt,
   where,
-} from './';
-import MockFirebase from '../../';
+} from '.';
+import MockFirebase from '../..';
 
 QUnit.module('Unit | Util | query', () => {
   QUnit.module('function: endAt', () => {
@@ -425,10 +425,30 @@ QUnit.module('Unit | Util | query', () => {
         user_c: { age: 20 },
       });
     });
+
+    QUnit.test('should return records matching the array-contains filter', (assert) => {
+      assert.expect(1);
+
+      // Arrange
+      const records = {
+        user_a: { books: [10] },
+        user_b: { books: [15] },
+        user_c: { books: [10] },
+      };
+
+      // Act
+      const result = where(records, 'books', 'array-contains', 10);
+
+      // Assert
+      assert.deepEqual(result, {
+        user_a: { books: [10] },
+        user_c: { books: [10] },
+      });
+    });
   });
 
   QUnit.module('function: querySnapshot', () => {
-    QUnit.test('should return QuerySnapshot of undeleted documents', (assert) => {
+    QUnit.test('should return QuerySnapshot of undeleted and undirty documents', (assert) => {
       assert.expect(1);
 
       // Arrange
@@ -443,6 +463,9 @@ QUnit.module('Unit | Util | query', () => {
           },
           user_c: {
             name: 'User C',
+          },
+          user_d: {
+            __isDirty__: true,
           },
         },
       };

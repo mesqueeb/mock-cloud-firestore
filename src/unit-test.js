@@ -1,21 +1,22 @@
 import sinon from 'sinon';
 
+import firebase from 'firebase';
 import CollectionReference from './firebase/firestore/collection-reference';
 import DocumentReference from './firebase/firestore/document-reference';
 import DocumentSnapshot from './firebase/firestore/document-snapshot';
 import FieldValue from './firebase/firestore/field-value';
 import Firestore from './firebase/firestore';
-import MockFirebase from './';
+import MockFirebase from '.';
 import QuerySnapshot from './firebase/firestore/query-snapshot';
 import Query from './firebase/firestore/query';
-import firebase from 'firebase';
 import fixtureData from './utils/test-helpers/fixture-data';
 
 let mockFirebase;
 
 QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
+  QUnit.config.testTimeout = 3000;
   hooks.beforeEach(() => {
-    mockFirebase = new MockFirebase(fixtureData());
+    mockFirebase = new MockFirebase(fixtureData(), { isNaiveSnapshotListenerEnabled: true });
   });
 
   QUnit.module('CollectionReference', () => {
@@ -238,6 +239,47 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
           assert.ok(snapshot instanceof QuerySnapshot);
           done();
         });
+      });
+
+      QUnit.test('should listen for changes in the data', (assert) => {
+        assert.expect(5);
+
+        // Arrange
+        const db = mockFirebase.firestore();
+
+        const snapshots = [];
+
+        const snapshotDone = assert.async();
+        const unsubscribe = db.collection('users').onSnapshot((snapshot) => {
+          snapshots.push(snapshot.docs.map(doc => doc.data()));
+          if (snapshots.length === 2) {
+            assert.equal(snapshots[0].length, 3);
+            assert.equal(snapshots[0][1].username, 'user_b');
+            assert.equal(snapshots[0][1].age, 10);
+            assert.equal(snapshots[1][1].username, 'user_b');
+            assert.equal(snapshots[1][1].age, 2);
+
+            snapshotDone();
+          }
+
+          if (snapshots.length > 2) {
+            assert.ok(false, 'Should not be called more than twice');
+          }
+        });
+
+        setTimeout(() => {
+          const unsubscribeDone = assert.async();
+          db.collection('users').doc('user_b').update({
+            age: 2,
+          });
+          unsubscribe();
+          setTimeout(() => {
+            db.collection('users').doc('user_b').update({
+              age: 3,
+            });
+            unsubscribeDone();
+          }, 100);
+        }, 100);
       });
     });
 
@@ -474,11 +516,50 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
           done();
         });
       });
+
+      QUnit.test('should listen for changes in the data', (assert) => {
+        assert.expect(4);
+
+        // Arrange
+        const onSnapshotDone = assert.async();
+        const db = mockFirebase.firestore();
+
+        const snapshots = [];
+        // Act
+        const unsubscribe = db.collection('users').doc('user_a').onSnapshot((snapshot) => {
+          // Assert
+          assert.ok(snapshot instanceof DocumentSnapshot);
+          snapshots.push(snapshot.data());
+          if (snapshots.length === 2) {
+            assert.equal(snapshots[0].age, 15);
+            assert.equal(snapshots[1].age, 10);
+            onSnapshotDone();
+          }
+
+          if (snapshots.length > 2) {
+            assert.ok(false, 'Should not be called more than twice');
+          }
+        });
+
+        const unsubscribeDone = assert.async();
+        setTimeout(() => {
+          db.collection('users').doc('user_a').update({
+            age: 10,
+          });
+          unsubscribe();
+          setTimeout(() => {
+            db.collection('users').doc('user_b').update({
+              age: 2,
+            });
+            unsubscribeDone();
+          }, 100);
+        }, 100);
+      });
     });
 
     QUnit.module('function: set', () => {
-      QUnit.test('should set the data using the default options when it exist', async (assert) => {
-        assert.expect(3);
+      QUnit.test('should set the data using the non-merge option', async (assert) => {
+        assert.expect(8);
 
         // Arrange
         const db = mockFirebase.firestore();
@@ -486,45 +567,31 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
 
         // Act
         await ref.set({
+          'address.home': 'San Francisco',
+          age: null,
           name: 'user_a',
           dad: db.collection('users').doc('user_b'),
           modifiedOn: firebase.firestore.FieldValue.serverTimestamp(),
+          pinnedBooks: firebase.firestore.FieldValue.arrayUnion('book_100'),
+          pinnedFoods: firebase.firestore.FieldValue.arrayRemove('food_1'),
         });
 
         // Assert
         const snapshot = await ref.get();
-        const { dad, modifiedOn, name } = snapshot.data();
+        const data = snapshot.data();
 
-        assert.deepEqual(dad, db.collection('users').doc('user_b'));
-        assert.ok(modifiedOn.toDate() instanceof Date);
-        assert.equal(name, 'user_a');
-      });
-
-      QUnit.test('should set the data using the default options when it does not exists', async (assert) => {
-        assert.expect(3);
-
-        // Arrange
-        const db = mockFirebase.firestore();
-        const ref = db.collection('users').doc('user_100');
-
-        // Act
-        await ref.set({
-          dad: db.collection('users').doc('user_b'),
-          modifiedOn: firebase.firestore.FieldValue.serverTimestamp(),
-          username: 'user_100',
-        });
-
-        // Assert
-        const snapshot = await ref.get();
-        const { dad, modifiedOn, username } = snapshot.data();
-
-        assert.deepEqual(dad, db.collection('users').doc('user_b'));
-        assert.ok(modifiedOn.toDate() instanceof Date);
-        assert.equal(username, 'user_100');
+        assert.equal(Object.keys(data).length, 7);
+        assert.equal(data['address.home'], 'San Francisco');
+        assert.equal(data.age, null);
+        assert.deepEqual(data.dad, db.collection('users').doc('user_b'));
+        assert.ok(data.modifiedOn.toDate() instanceof Date);
+        assert.deepEqual(data.pinnedBooks, ['book_100']);
+        assert.deepEqual(data.pinnedFoods, []);
+        assert.equal(data.name, 'user_a');
       });
 
       QUnit.test('should set the data using the merge option', async (assert) => {
-        assert.expect(7);
+        assert.expect(11);
 
         // Arrange
         const db = mockFirebase.firestore();
@@ -532,36 +599,67 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
 
         // Act
         await ref.set({
+          'address.home': 'San Francisco',
+          name: firebase.firestore.FieldValue.delete(),
           dad: db.collection('users').doc('user_b'),
           modifiedOn: firebase.firestore.FieldValue.serverTimestamp(),
-          name: 'user_a',
+          pinnedBooks: firebase.firestore.FieldValue.arrayUnion('book_100'),
+          pinnedFoods: firebase.firestore.FieldValue.arrayRemove('food_1'),
         }, { merge: true });
 
         // Assert
         const snapshot = await ref.get();
-        const {
-          address,
-          age,
-          createdOn,
-          dad,
-          modifiedOn,
-          name,
-          username,
-        } = snapshot.data();
+        const data = snapshot.data();
 
-        assert.deepEqual(address, { home: 'San Francisco', work: 'Silicon Valley' });
-        assert.equal(age, 15);
-        assert.deepEqual(createdOn.toDate(), new Date('2017-01-01'));
-        assert.deepEqual(dad, db.collection('users').doc('user_b'));
-        assert.ok(modifiedOn.toDate() instanceof Date);
-        assert.equal(name, 'user_a');
-        assert.equal(username, 'user_a');
+        assert.equal(Object.keys(data).length, 9);
+        assert.deepEqual(data.address, { home: 'San Francisco', work: 'Silicon Valley' });
+        assert.equal(data['address.home'], 'San Francisco');
+        assert.equal(data.age, 15);
+        assert.deepEqual(data.createdOn.toDate(), new Date('2017-01-01'));
+        assert.deepEqual(data.dad, db.collection('users').doc('user_b'));
+        assert.ok(data.modifiedOn.toDate() instanceof Date);
+        assert.deepEqual(data.pinnedBooks, ['book_1', 'book_2', 'book_100']);
+        assert.deepEqual(data.pinnedFoods, ['food_2']);
+        assert.equal(data.name, undefined);
+        assert.equal(data.username, 'user_a');
+      });
+
+      QUnit.test('should throw error when setting data with an undefined value', async (assert) => {
+        assert.expect(1);
+
+        // Arrange
+        const db = mockFirebase.firestore();
+        const ref = db.collection('users').doc('user_a');
+
+        try {
+          // Act
+          await ref.set({ name: undefined });
+        } catch (e) {
+          // Assert
+          assert.ok(true);
+        }
+      });
+
+      QUnit.test('should throw error when setting data with a FieldValue.delete() value', async (assert) => {
+        assert.expect(1);
+
+        // Arrange
+        const db = mockFirebase.firestore();
+        const ref = db.collection('users').doc('user_a');
+
+        try {
+          // Act
+          await ref.set({ name: firebase.firestore.FieldValue.delete() });
+        } catch (e) {
+          // Assert
+          assert.ok(true);
+        }
       });
     });
 
     QUnit.module('function: update', () => {
       QUnit.test('should update the data', async (assert) => {
-        assert.expect(7);
+        assert.expect(11);
 
         // Arrange
         const db = mockFirebase.firestore();
@@ -569,8 +667,14 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
 
         // Act
         await ref.update({
+          'address.work': 'Bay Area',
+          'address.home': firebase.firestore.FieldValue.delete(),
+          'contact.mobile.personal': 67890,
+          age: firebase.firestore.FieldValue.delete(),
           dad: db.collection('users').doc('user_b'),
           modifiedOn: firebase.firestore.FieldValue.serverTimestamp(),
+          pinnedBooks: firebase.firestore.FieldValue.arrayUnion('book_100'),
+          pinnedFoods: firebase.firestore.FieldValue.arrayRemove('food_1'),
           name: 'user_a',
         });
 
@@ -579,19 +683,28 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
         const {
           address,
           age,
+          contact,
           createdOn,
           dad,
           modifiedOn,
           name,
+          pinnedBooks,
+          pinnedFoods,
           username,
         } = snapshot.data();
 
-        assert.deepEqual(address, { home: 'San Francisco', work: 'Silicon Valley' });
-        assert.equal(age, 15);
+        assert.equal(Object.keys(snapshot.data()).length, 9);
+        assert.deepEqual(address, { work: 'Bay Area' });
+        assert.equal(age, undefined);
+        assert.deepEqual(contact, {
+          mobile: { personal: 67890 },
+        });
         assert.deepEqual(createdOn.toDate(), new Date('2017-01-01'));
         assert.deepEqual(dad, db.collection('users').doc('user_b'));
         assert.ok(modifiedOn.toDate() instanceof Date);
         assert.equal(name, 'user_a');
+        assert.deepEqual(pinnedBooks, ['book_1', 'book_2', 'book_100']);
+        assert.deepEqual(pinnedFoods, ['food_2']);
         assert.equal(username, 'user_a');
       });
 
@@ -605,6 +718,22 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
         try {
           // Act
           await ref.update({ name: 'user_100' });
+        } catch (e) {
+          // Assert
+          assert.ok(true);
+        }
+      });
+
+      QUnit.test('should throw error when updating data with an undefined value', async (assert) => {
+        assert.expect(1);
+
+        // Arrange
+        const db = mockFirebase.firestore();
+        const ref = db.collection('users').doc('user_a');
+
+        try {
+          // Act
+          await ref.update({ name: undefined });
         } catch (e) {
           // Assert
           assert.ok(true);
@@ -808,15 +937,57 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
   });
 
   QUnit.module('FieldValue', () => {
+    QUnit.module('function: arrayUnion', () => {
+      QUnit.test('should return an array union representation', (assert) => {
+        assert.expect(1);
+
+        // Act
+        const result = mockFirebase.firestore.FieldValue.arrayUnion('foo', 'bar');
+
+        // Assert
+        assert.deepEqual(result, {
+          _methodName: 'FieldValue.arrayUnion',
+          _elements: ['foo', 'bar'],
+        });
+      });
+    });
+
+    QUnit.module('function: arrayRemove', () => {
+      QUnit.test('should return an array union representation', (assert) => {
+        assert.expect(1);
+
+        // Act
+        const result = mockFirebase.firestore.FieldValue.arrayRemove('foo', 'bar');
+
+        // Assert
+        assert.deepEqual(result, {
+          _methodName: 'FieldValue.arrayRemove',
+          _elements: ['foo', 'bar'],
+        });
+      });
+    });
+
+    QUnit.module('function: delete', () => {
+      QUnit.test('should return a delete field representation', (assert) => {
+        assert.expect(1);
+
+        // Act
+        const result = mockFirebase.firestore.FieldValue.delete();
+
+        // Assert
+        assert.deepEqual(result, { _methodName: 'FieldValue.delete' });
+      });
+    });
+
     QUnit.module('function: serverTimestamp', () => {
-      QUnit.test('should return a new date', (assert) => {
+      QUnit.test('should return a server timestamp representation', (assert) => {
         assert.expect(1);
 
         // Act
         const result = mockFirebase.firestore.FieldValue.serverTimestamp();
 
         // Assert
-        assert.ok(result instanceof Date);
+        assert.deepEqual(result, { _methodName: 'FieldValue.serverTimestamp' });
       });
     });
   });
@@ -1089,6 +1260,47 @@ QUnit.module('Unit | mock-cloud-firestore', (hooks) => {
         // Assert
         assert.ok(typeof result === 'function');
       });
+
+      QUnit.test('should listen for changes in the data', (assert) => {
+        assert.expect(1);
+
+        // Arrange
+        const db = mockFirebase.firestore();
+
+        const snapshots = [];
+
+        // Act
+        const snapshotDone = assert.async();
+        const unsubscribe = db.collection('users').orderBy('age').onSnapshot((snapshot) => {
+          snapshots.push(snapshot.docs.map(doc => [doc.data().age, doc.data().username]));
+          if (snapshots.length === 2) {
+            assert.deepEqual(snapshots, [
+              [[10, 'user_b'], [15, 'user_a'], [20, 'user_c']],
+              [[15, 'user_a'], [16, 'user_b'], [20, 'user_c']],
+            ]);
+            snapshotDone();
+          }
+
+          if (snapshots.length > 2) {
+            assert.ok(false, 'Should not be called more than twice');
+          }
+        });
+
+        setTimeout(() => {
+          const unsubscribeDone = assert.async();
+          db.collection('users').doc('user_b').update({
+            age: 16,
+          });
+          unsubscribe();
+          setTimeout(() => {
+            db.collection('users').doc('user_b').update({
+              age: 2,
+            });
+            unsubscribeDone();
+          }, 100);
+        }, 100);
+      });
+
 
       QUnit.test('should fire callback', (assert) => {
         assert.expect(1);

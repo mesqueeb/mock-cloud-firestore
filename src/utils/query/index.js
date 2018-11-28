@@ -8,9 +8,9 @@ function filterByCursor(data, prop, value, cursor) {
   const ids = Object.keys(data).filter((id) => {
     if (cursor === 'endAt') {
       return data[id][prop] <= value;
-    } else if (cursor === 'endBefore') {
+    } if (cursor === 'endBefore') {
       return data[id][prop] < value;
-    } else if (cursor === 'startAfter') {
+    } if (cursor === 'startAfter') {
       return data[id][prop] > value;
     }
 
@@ -69,7 +69,7 @@ export function orderBy(data, key, order) {
       }
       if (data[a][key] > data[b][key]) {
         return -1;
-      } else if (data[a][key] < data[b][key]) {
+      } if (data[a][key] < data[b][key]) {
         return 1;
       }
 
@@ -82,7 +82,7 @@ export function orderBy(data, key, order) {
       }
       if (data[a][key] < data[b][key]) {
         return -1;
-      } else if (data[a][key] > data[b][key]) {
+      } if (data[a][key] > data[b][key]) {
         return 1;
       }
 
@@ -113,9 +113,9 @@ export function where(data = {}, key, operator, value) {
 
     if (operator === '<') {
       return pathValue < value;
-    } else if (operator === '<=') {
+    } if (operator === '<=') {
       return pathValue <= value;
-    } else if (operator === '==') {
+    } if (operator === '==') {
       if (value instanceof DocumentReference) {
         return (
           pathValue
@@ -125,8 +125,10 @@ export function where(data = {}, key, operator, value) {
       }
 
       return pathValue === value;
-    } else if (operator === '>=') {
+    } if (operator === '>=') {
       return pathValue >= value;
+    } if (operator === 'array-contains') {
+      return pathValue.find(item => item === value);
     }
 
     return pathValue > value;
@@ -146,7 +148,7 @@ export function querySnapshot(data, collection) {
     for (const key of Object.keys(data.__doc__)) {
       const documentRecord = data.__doc__[key];
 
-      if (!documentRecord.__isDeleted__) {
+      if (!documentRecord.__isDeleted__ && !documentRecord.__isDirty__) {
         const documentReference = new DocumentReference(
           key,
           documentRecord,
